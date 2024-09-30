@@ -8,21 +8,14 @@
 - Provides a real implementation that wraps `exec.Cmd`
 - Includes a mock implementation for testing in a separate `mockcmd` subpackage
 - Supports context-based command creation
-- Offers utility functions for creating mock commands with various behaviors
-
-## Limitations
-- Only a subset of `exec.Cmd` methods are currently supported in the mock implementation. 
-- only CommandContext is supported. Command without context is not supported.
-- Streaming output is not supported in the mock implementation. You can only get the output after the command has finished.
-
-If you need additional functionality, you can build other mock implementations that satisfy the `Commander` interface.
+- Offers a multi-command mock for handling multiple command configurations
 
 ## Installation
 
 To install `cdsexec`, use `go get`:
 
 ```bash
-go get github.com/cirrusdata/cdsexec
+go get -u github.com/cirrusdata/cdsexec
 ```
 
 ## Usage
@@ -59,51 +52,58 @@ import (
 )
 
 func TestSomeFunction(t *testing.T) {
-    // Create a mock command with fixed output
-    mockCommandContext := mockcmd.MakeMockCmdWithOutput("mocked output", func(cmd *mockcmd.MockCmd) error {
-        if cmd.Name != "expected-command" {
-            return fmt.Errorf("unexpected command: %s", cmd.Name)
-        }
-        return nil
-    })
+    configs := []mockcmd.CommandConfig{
+        {
+            Name:   "ls",
+            Args:   []string{"-l"},
+            Stdout: []byte("file1\nfile2\n"),
+        },
+        {
+            Name:   "cat",
+            Args:   []string{"file1"},
+            Stdout: []byte("contents of file1"),
+        },
+    }
+
+    mockCommandContext := mockcmd.MultiCmdMock(configs...)
 
     // Use the mock constructor in your code
-    cmd := mockCommandContext(context.Background(), "expected-command", "-arg1", "-arg2")
+    cmd := mockCommandContext(context.Background(), "ls", "-l")
     
     output, err := cmd.Output()
     if err != nil {
         t.Fatalf("Unexpected error: %v", err)
     }
-    if string(output) != "mocked output" {
+    if string(output) != "file1\nfile2\n" {
         t.Errorf("Unexpected output: %s", string(output))
     }
 
-    // You can also assert on the MockCmd's properties if needed
-    mockCmd := cmd.(*mockcmd.MockCmd)
-    if !mockCmd.startCalled {
-        t.Error("Start was not called")
-    }
-    if !mockCmd.waitCalled {
-        t.Error("Wait was not called")
+    // Test an unmatched command
+    cmd = mockCommandContext(context.Background(), "unknown", "command")
+    _, err = cmd.Output()
+    if err != mockcmd.ErrNoMatchingCommand {
+        t.Errorf("Expected ErrNoMatchingCommand, got: %v", err)
     }
 }
 ```
 
 ## Mock Features
 
-The `mockcmd` subpackage provides several utility functions for creating mock commands:
+The `mockcmd` subpackage provides a `MultiCmdMock` function for creating mock commands:
 
-- `MakeMockCmdWithOutput`: Creates a mock command with fixed output
-- `MakeMockCmdWithOutputGenericError`: Creates a mock command that returns a generic error
-- `MakeMockCmdWithOutputSpecificError`: Creates a mock command with fixed output and a specific error
-- `MakeMockCmd`: Creates a mock command from a pre-configured `MockCmd` struct
+```go
+func MultiCmdMock(configs ...CommandConfig) cdsexec.CommandConstructor
+```
 
-The `MockCmd` struct provides several features to help with testing:
+The `CommandConfig` struct allows you to specify:
 
-- `Stdout` and `Stderr`: Set these to provide predefined output
-- `Err`: Set this to simulate command errors
-- `CheckFunc`: Use this to verify if the command was constructed correctly
-- `startCalled` and `waitCalled`: These flags track whether `Start()` and `Wait()` were called
+- `Name`: The name of the command
+- `Args`: The arguments for the command
+- `Stdout`: The simulated standard output
+- `Stderr`: The simulated standard error
+- `Err`: Any error that should be returned
+
+When an unmatched command is executed, the mock returns `ErrNoMatchingCommand`.
 
 ## Example: Using Mock in a Service
 
@@ -118,8 +118,8 @@ func NewMyService(commandContext cdsexec.CommandConstructor) *MyService {
     return &MyService{commandContext: commandContext}
 }
 
-func (s *MyService) DoSomething(ctx context.Context) (string, error) {
-    cmd := s.commandContext(ctx, "some-command", "-arg1", "-arg2")
+func (s *MyService) ListFiles(ctx context.Context) (string, error) {
+    cmd := s.commandContext(ctx, "ls", "-l")
     output, err := cmd.Output()
     if err != nil {
         return "", err
@@ -129,14 +129,21 @@ func (s *MyService) DoSomething(ctx context.Context) (string, error) {
 
 // In your tests:
 func TestMyService(t *testing.T) {
-    mockCommandContext := mockcmd.MakeMockCmdWithOutput("expected output", nil)
+    configs := []mockcmd.CommandConfig{
+        {
+            Name:   "ls",
+            Args:   []string{"-l"},
+            Stdout: []byte("file1\nfile2\n"),
+        },
+    }
+    mockCommandContext := mockcmd.MultiCmdMock(configs...)
     service := NewMyService(mockCommandContext)
     
-    result, err := service.DoSomething(context.Background())
+    result, err := service.ListFiles(context.Background())
     if err != nil {
         t.Fatalf("Unexpected error: %v", err)
     }
-    if result != "expected output" {
+    if result != "file1\nfile2\n" {
         t.Errorf("Unexpected result: %s", result)
     }
 }
@@ -147,3 +154,13 @@ func main() {
     // Use the service...
 }
 ```
+
+## Error Handling
+
+The `MultiCmdMock` returns `ErrNoMatchingCommand` when an unmatched command is executed:
+
+```go
+var ErrNoMatchingCommand = errors.New("no matching command found in this mock")
+```
+
+You can check for this error in your tests to verify that an unexpected command was not executed.
