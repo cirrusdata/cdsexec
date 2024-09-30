@@ -6,16 +6,17 @@
 
 - Abstracts `exec.Cmd` functionality through interfaces
 - Provides a real implementation that wraps `exec.Cmd`
-- Includes a mock implementation for testing in a separate `mockcmd` subpackage
+- Includes mock implementations for testing in a separate `mockcmd` subpackage:
+    - Single command mock for simple scenarios
+    - Multi-command mock for complex testing situations
 - Supports context-based command creation
-- Offers a multi-command mock for handling multiple command configurations
 
 ## Installation
 
 To install `cdsexec`, use `go get`:
 
 ```bash
-go get -u github.com/cirrusdata/cdsexec
+go get github.com/cirrusdata/cdsexec
 ```
 
 ## Usage
@@ -40,7 +41,11 @@ func main() {
 
 ### Mocking in Tests
 
-To use the mock implementation in your tests, import the `mockcmd` subpackage:
+The `mockcmd` subpackage provides two types of mocks: single command mock and multi-command mock.
+
+#### Single Command Mock
+
+For simple scenarios where you need to mock a single command:
 
 ```go
 import (
@@ -51,7 +56,40 @@ import (
     "github.com/cirrusdata/cdsexec/mockcmd"
 )
 
-func TestSomeFunction(t *testing.T) {
+func TestWithSingleCommandMock(t *testing.T) {
+    mockCommandContext := mockcmd.MakeMockCmdWithOutput("mocked output", func(cmd *mockcmd.MockCmd) error {
+        if cmd.Name != "expected-command" {
+            return fmt.Errorf("unexpected command: %s", cmd.Name)
+        }
+        return nil
+    })
+
+    cmd := mockCommandContext(context.Background(), "expected-command", "-arg1", "-arg2")
+    
+    output, err := cmd.Output()
+    if err != nil {
+        t.Fatalf("Unexpected error: %v", err)
+    }
+    if string(output) != "mocked output" {
+        t.Errorf("Unexpected output: %s", string(output))
+    }
+}
+```
+
+#### Multi-Command Mock
+
+For more complex scenarios where you need to mock multiple commands:
+
+```go
+import (
+    "context"
+    "testing"
+
+    "github.com/cirrusdata/cdsexec"
+    "github.com/cirrusdata/cdsexec/mockcmd"
+)
+
+func TestWithMultiCommandMock(t *testing.T) {
     configs := []mockcmd.CommandConfig{
         {
             Name:   "ls",
@@ -67,9 +105,8 @@ func TestSomeFunction(t *testing.T) {
 
     mockCommandContext := mockcmd.MultiCmdMock(configs...)
 
-    // Use the mock constructor in your code
+    // Test matched command
     cmd := mockCommandContext(context.Background(), "ls", "-l")
-    
     output, err := cmd.Output()
     if err != nil {
         t.Fatalf("Unexpected error: %v", err)
@@ -78,7 +115,7 @@ func TestSomeFunction(t *testing.T) {
         t.Errorf("Unexpected output: %s", string(output))
     }
 
-    // Test an unmatched command
+    // Test unmatched command
     cmd = mockCommandContext(context.Background(), "unknown", "command")
     _, err = cmd.Output()
     if err != mockcmd.ErrNoMatchingCommand {
@@ -89,7 +126,18 @@ func TestSomeFunction(t *testing.T) {
 
 ## Mock Features
 
-The `mockcmd` subpackage provides a `MultiCmdMock` function for creating mock commands:
+### Single Command Mock
+
+The `mockcmd` subpackage provides several utility functions for creating single command mocks:
+
+- `MakeMockCmdWithOutput`: Creates a mock command with fixed output
+- `MakeMockCmdWithOutputGenericError`: Creates a mock command that returns a generic error
+- `MakeMockCmdWithOutputSpecificError`: Creates a mock command with fixed output and a specific error
+- `MakeMockCmd`: Creates a mock command from a pre-configured `MockCmd` struct
+
+### Multi-Command Mock
+
+The `MultiCmdMock` function creates a mock that can handle multiple command configurations:
 
 ```go
 func MultiCmdMock(configs ...CommandConfig) cdsexec.CommandConstructor
@@ -107,7 +155,7 @@ When an unmatched command is executed, the mock returns `ErrNoMatchingCommand`.
 
 ## Example: Using Mock in a Service
 
-Here's an example of how to use the mock in a service that depends on command execution:
+Here's an example of how to use the multi-command mock in a service that depends on command execution:
 
 ```go
 type MyService struct {
